@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>vTV | Live TV, For Free</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: 'Lexend', sans-serif;
+      background-color: #121212;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+    }
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 250px;
+      background-color: #181818;
+      border-right: 2px solid #333;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      overflow-y: auto;
+      max-height: 100%;
+    }
+    .sidebar input {
+      margin-bottom: 0.5rem;
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: none;
+    }
+    .sidebar button {
+      background-color: #292929;
+      color: #fff;
+      border: none;
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .sidebar button:hover {
+      background-color: #383838;
+    }
+    .content {
+      flex: 1;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      background-color: black;
+    }
+    footer {
+      background-color: #1f1f1f;
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.85rem;
+      border-top: 2px solid #333;
+    }
+    @media (max-width: 768px) {
+      main {
+        flex-direction: column;
+      }
+      .content {
+        height: 50%;
+        padding: 0.5rem;
+      }
+      video {
+        height: 100%;
+      }
+      .sidebar {
+        width: 100%;
+        height: 50%;
+        border-right: none;
+        border-top: 2px solid #333;
+        overflow-y: auto;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        padding: 0.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="content">
+      <video id="video" controls playsinline></video>
+    </div>
+    <div class="sidebar" id="channelList">
+      <input type="text" id="searchBox" placeholder="Search channels..." oninput="filterChannels()">
+      <button onclick="loadFreeFeed()">Load Free Channels</button>
+      <button onclick="promptFeedChange()">Load Channels from .m3u Link</button>
+    </div>
+  </main>
+
+  <footer>
+    &copy; <a href="https://github.com/vivcod3s/vTV" target="_blank" style="color:#bbb">vivcod3s/vTV</a>. All rights reserved. <small>*The free channels are from <a href="https://github.com/iptv-org/iptv" target="_blank" style="color:#bbb">iptv-org/iptv on GitHub</a>. vTV is not a content distributor and doesn't host, record, or store content.</small>
+  </footer>
+
+  <script>
+    let channels = [];
+    let video = document.getElementById('video');
+    let channelListEl = document.getElementById('channelList');
+
+    function attemptAutoplay() {
+      video.play().catch(() => {
+        // If autoplay fails, mute and retry
+        video.muted = true;
+        video.play().catch(err => {
+          console.warn("Autoplay failed even after muting:", err);
+        });
+      });
+    }
+
+    function loadStream(url, index = 0) {
+      if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          attemptAutoplay();
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.addEventListener('loadedmetadata', attemptAutoplay, { once: true });
+      }
+      localStorage.setItem('lastChannelIndex', index);
+    }
+
+    function loadFeed(m3uUrl, autoplay = true) {
+      localStorage.setItem('feedUrl', m3uUrl);
+
+      fetch(m3uUrl)
+        .then(response => response.text())
+        .then(data => {
+          channels = [];
+          const lines = data.split('\n');
+          let name = '';
+          lines.forEach(line => {
+            if (line.startsWith('#EXTINF')) {
+              name = line.split(',')[1];
+            } else if (line.startsWith('http')) {
+              channels.push({ name, url: line });
+            }
+          });
+          displayChannels();
+
+          if (autoplay && channels.length > 0) {
+            const lastIndex = parseInt(localStorage.getItem('lastChannelIndex')) || 0;
+            const clampedIndex = Math.min(Math.max(lastIndex, 0), channels.length - 1);
+            loadStream(channels[clampedIndex].url, clampedIndex);
+          }
+        });
+    }
+
+    function displayChannels() {
+      channelListEl.innerHTML = '<input type="text" id="searchBox" placeholder="Search channels..." oninput="filterChannels()">' +
+                                '<button onclick="loadFreeFeed()">Load Free Channels*</button>' +
+                                '<button onclick="promptFeedChange()">Load Channels from .m3u Link</button>';
+      channels.forEach((channel, index) => {
+        const btn = document.createElement('button');
+        btn.textContent = channel.name;
+        btn.setAttribute('data-name', channel.name.toLowerCase());
+        btn.onclick = () => loadStream(channel.url, index);
+        channelListEl.appendChild(btn);
+      });
+    }
+
+    function filterChannels() {
+      const term = document.getElementById('searchBox').value.toLowerCase();
+      const buttons = channelListEl.querySelectorAll('button');
+      buttons.forEach(btn => {
+        const name = btn.textContent.toLowerCase();
+        const isControlButton = btn.textContent.includes('Load') || btn.textContent.includes('Change');
+        btn.style.display = (name.includes(term) || isControlButton) ? 'block' : 'none';
+      });
+    }
+
+    function promptFeedChange() {
+      if (confirm('Are you sure you want to change the current feed? This will remove current channels.')) {
+        const url = prompt('Enter M3U Playlist URL:');
+        if (url) loadFeed(url);
+      }
+    }
+
+    function loadFreeFeed() {
+      if (confirm('Are you sure you want to load the free channels? This will remove current channels.')) {
+        loadFeed('https://cdn.jsdelivr.net/gh/iptv-org/iptv@gh-pages/index.m3u');
+      }
+    }
+
+    // Auto-load previous feed + channel on page load
+    window.onload = () => {
+      const savedFeed = localStorage.getItem('feedUrl');
+      if (savedFeed) {
+        loadFeed(savedFeed, true);
+      }
+    };
+  </script>
+</body>
+</html>
